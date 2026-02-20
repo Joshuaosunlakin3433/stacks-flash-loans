@@ -21,8 +21,33 @@
         (amount uint)
         (recipient <stx-flasher>)
     )
-    ;; TO-DO
-    (ok true)
+    (let (
+            ;; Keep track of the original balance of STX in this contract
+            (original-stx-balance (stx-get-balance THIS_CONTRACT))
+            ;; Calculate the total return amount including interest fees
+            (return-amount (get-return-amount amount STX_FLASH_FEES_PIPS))
+            ;; Calculate the interest amount
+            (interest-amount (- return-amount amount))
+            ;; Calculate the final STX balance we should have after the flash loan
+            (expected-final-stx-balance (+ original-stx-balance interest-amount))
+        )
+        ;; Ensure we have enough STX to even do the flash loan
+        (asserts! (>= original-stx-balance amount) ERR_INSUFFICIENT_BALANCE)
+        ;; Send STX to the reciver contract
+        (unwrap!
+            (as-contract (stx-transfer? amount THIS_CONTRACT (contract-of recipient)))
+            ERR_OUTBOUND_TRANSFER_FAILED
+        )
+        ;; Call the receiver contract's on-stx-flash function
+        (unwrap! (contract-call? recipient on-stx-flash amount return-amount)
+            ERR_FLASHER_CALLBACK_FAILED
+        )
+        ;; Check that the receiver contract paid back the amount plus interest
+        (asserts! (>= (stx-get-balance THIS_CONTRACT) expected-final-stx-balance)
+            ERR_INSUFFICIENT_PAYBACK
+        )
+        (ok true)
+    )
 )
 
 ;; Flash a SIP010 token amount to a recipient contract that implements the sip010-flasher trait
@@ -49,5 +74,4 @@
         )
         return-amount
     )
-)  
-
+)
