@@ -54,13 +54,49 @@
 ;; Verifies that it gets paid back the amount plus interest by the end of the call
 ;; Reverts the transaction if the recipient contract fails to pay back the amount plus interest
 
+;; Flash a SIP010 token amount to a recipient contract that implements the sip010-flasher trait
+;; Verifies that it gets paid back the amount plus interest by the end of the call
+;; Reverts the transaction if the recipient contract fails to pay back the amount plus interest
 (define-public (flash-sip010
         (token <ft-trait>)
         (amount uint)
         (recipient <sip010-flasher>)
     )
-    ;; TO-DO
-    (ok true)
+    (let (
+            ;; Keep track of the original balance of the token in this contract
+            (original-token-balance (unwrap! (contract-call? token get-balance THIS_CONTRACT)
+                ERR_FAILED_TO_FETCH_BALANCE
+            ))
+            ;; Calculate the total return amount including interest fees
+            (return-amount (get-return-amount amount SIP010_FLASH_FEES_PIPS))
+            ;; Calculate the interest amount
+            (interest-amount (- return-amount amount))
+            ;; Calculate the final token balance we SHOULD have after the flash loan
+            (expected-final-token-balance (+ original-token-balance interest-amount))
+        )
+        (asserts! (>= original-token-balance amount) ERR_INSUFFICIENT_BALANCE)
+        (unwrap!
+            (as-contract (contract-call? token transfer amount THIS_CONTRACT
+                (contract-of recipient) none
+            ))
+            ERR_OUTBOUND_TRANFER_FAILED
+        )
+        (unwrap!
+            (contract-call? recipient on-sip010-flash token amount return-amount)
+            ERR_FLASHER_CALLBACK_FAILED
+        )
+        (asserts!
+            (>=
+                (unwrap!
+                    (as-contract (contract-call? token get-balance THIS_CONTRACT))
+                    ERR_FAILED_TO_FETCH_BALANCE
+                )
+                expected-final-token-balance
+            )
+            ERR_INSUFFICIENT_PAYBACK
+        )
+        (ok true)
+    )
 )
 
 ;; Given an amount and interest fees being charged, calculates the return amount
